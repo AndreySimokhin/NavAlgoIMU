@@ -1,12 +1,11 @@
-
 import csv
 import numpy as np
 
-from .constants import Const
 from .state import State
 from .small_increments import SmallIncrements
 from .imu_emulator import IMU_emulator
 from . import math_functions as MathFunc
+from .constants import U_EARTH_ROTATION_RATE, RADIUS_EARTH, GRAVITY_AXELERATION
 
 
 class Navigation_System:
@@ -19,30 +18,32 @@ class Navigation_System:
         self.imu = imu
         self.rate_decrease = rate_decrease
         self.state_vault = []
-        self.imu.integrating_prescaler = self.imu.frequency / rate_decrease
+        # self.imu.integration_prescaler = rate_decrease
 
     async def navigate(self) -> None:
         # Const
-        H1 = 1
-        H4 = H1 * 4
+        dt = 1 / self.imu.frequency
+        H1 = self.rate_decrease * dt
+        H4 = 4 * H1
 
         # Buffered data
         increment: SmallIncrements | None = None
         increments: list[SmallIncrements] = []
         prevState = self.imu.initial_state
-        time = 0
+        tick_counter = 0
 
         async for small_increment in self.imu.iter():
             increment = increment or SmallIncrements(0, 0, 0, 0, 0, 0, 0)
-            time = increment.t = small_increment.t
-            
+            increment.t = small_increment.t
+            tick_counter += 1
+
             # [1] Накопление приращений скорости
             MathFunc.integrateAngularRate(increment, small_increment)
 
             # [2] Накопление приращений ускорений
             MathFunc.integrateAxeleration(increment, small_increment)
 
-            if time % H1 == 0:
+            if tick_counter % self.rate_decrease == 0:
                 # [3] Компенсация погрешностей акселерометров
                 MathFunc.errorCompensationAxelerometr(increment)
                 
@@ -51,15 +52,18 @@ class Navigation_System:
                 
                 increments.append(increment)
                 increment = None
-
-            if time % H4 == 0:
-                state = State(small_increment.t, 0, 0, 0, 0, 0, 0, 0, 0, 0)    # type:ignore
+            
+            if tick_counter % (self.rate_decrease * 4) == 0:
+                state = State(small_increment.t, None, None, None, None, None, None, None, None, None, None)    # type:ignore
 
                 # [5] Вычисление ускорения методом Рунге-Кута 4-го порядка
                 delta_acceleration_body = MathFunc.calculateAxeleration(increments, H1)
                 
                 # [6] Вычисление ускорения в осях опорной СК
                 delta_acceleration_ref = prevState.C_body_to_ref @ delta_acceleration_body
+                # print(delta_acceleration_body)
+                # print(prevState.C_body_to_ref)
+                # print(delta_acceleration_ref)
 
                 # [7] Вычисление проекций вектора Эйлера
                 euler_vector_matrix = MathFunc.calculateEulerRotationVectorProjection(increments)
@@ -89,11 +93,7 @@ class Navigation_System:
                 state.C_body_to_ref = C_body_to_ref
 
                 # [15] Линейные скорости в опорной СК
-                [
-                    state.velocity_x_ref,
-                    state.velocity_y_ref,
-                    state.velocity_z_ref,
-                ] = MathFunc.calculateVelocityInRef(
+                state.velocity = MathFunc.calculateVelocityInRef(
                     prevState.velocity_x_ref,
                     prevState.velocity_y_ref,
                     prevState.velocity_z_ref,
@@ -105,8 +105,8 @@ class Navigation_System:
                 state.velocity_z_ref = np.longdouble(0.0)
 
                 # [16] Вычисление координат
-                state.latitude = prevState.latitude + H4 * state.velocity_y_ref / Const.RADIUS_EARTH
-                state.longitude = prevState.longitude + H4 * state.velocity_x_ref / (Const.RADIUS_EARTH * np.cos(prevState.latitude))
+                state.latitude = prevState.latitude + H4 * state.velocity_y_ref / RADIUS_EARTH
+                state.longitude = prevState.longitude + H4 * state.velocity_x_ref / (RADIUS_EARTH * np.cos(prevState.latitude))
 
                 # [17] Вычисление углов ориентации
                 state.heading = np.arctan2(
@@ -117,7 +117,7 @@ class Navigation_System:
                     C_body_to_ref[2, 0],
                     C_body_to_ref[2, 2]
                 )
-                state.pitch = -np.arctan2(
+                state.pitch = np.arctan2(
                     C_body_to_ref[2, 1],
                     np.sqrt(C_body_to_ref[0, 1] ** 2 + C_body_to_ref[1, 1] ** 2)
                 )

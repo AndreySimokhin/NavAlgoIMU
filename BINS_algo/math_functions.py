@@ -1,7 +1,7 @@
 import numpy as np
 
 from .small_increments import SmallIncrements
-from .constants import Const
+from .constants import U_EARTH_ROTATION_RATE, RADIUS_EARTH, GRAVITY_AXELERATION
 
 
 def calc_body_to_ref(heading: np.longdouble, pitch: np.longdouble, roll: np.longdouble) -> np.ndarray:
@@ -25,28 +25,26 @@ def calc_body_to_ref(heading: np.longdouble, pitch: np.longdouble, roll: np.long
 
 def normalizeMatrix(matrix: np.ndarray) -> None:
     '''Нормализация матрицы'''
-    for i in range(3):
-        matrix[i] = matrix[i] / (matrix[i] @ matrix[i].transpose())
+    A64 = matrix.astype(np.float64)
+    U, _, Vt = np.linalg.svd(A64)
+    C = U @ Vt
+    return C.astype(np.longdouble)
 
 def EarthRotationRateRef(latitude: np.longdouble) -> np.ndarray:
     '''[0] Угловая скорость вращения Земли'''
     return  np.array([
         0,
-        Const.U_EARTH_ROTATION_RATE * np.cos(latitude),
-        Const.U_EARTH_ROTATION_RATE * np.sin(latitude),
+        U_EARTH_ROTATION_RATE * np.cos(latitude),
+        U_EARTH_ROTATION_RATE * np.sin(latitude),
     ], np.longdouble)
 
 def integrateAngularRate(increment: SmallIncrements, small_increment: SmallIncrements) -> None:
     '''[1] Накопление приращений угловой скорости'''
-    increment.dwx += small_increment.dwx
-    increment.dwy += small_increment.dwy
-    increment.dwz += small_increment.dwz
+    increment.dw += small_increment.dw
 
 def integrateAxeleration(increment: SmallIncrements, small_increment: SmallIncrements) -> None:
     '''[2] Накопление приращений ускорения'''
-    increment.dax += small_increment.dax
-    increment.day += small_increment.day
-    increment.daz += small_increment.daz
+    increment.da += small_increment.da
 
 def errorCompensationAxelerometr(value: SmallIncrements) -> None:
     '''[3] Компенсация погрешностей акселерометров'''
@@ -56,7 +54,7 @@ def errorCompensationAngularRateSensor(value: SmallIncrements) -> None:
     '''[4] Компенсация погрешностей гироскопов'''
     return
 
-def calculateAxeleration(data: list[SmallIncrements], h1: int | float | np.longdouble, degree: int = 4) -> np.ndarray:
+def calculateAxeleration(data: list[SmallIncrements], h1: int | float | np.longdouble) -> np.ndarray:
     '''[5] Вычисление ускорения на интервале с пониженной частотой (RATE_DECREASE * h) уравнение Рунге-Кута 4 порядка'''
     delta_acceleration = np.array([0, 0 , 0], np.longdouble)
 
@@ -75,7 +73,7 @@ def calculateAxeleration(data: list[SmallIncrements], h1: int | float | np.longd
         delta_acceleration += (k1 + 2*k2 + 2*k3 + k4) / 6
 
     return delta_acceleration
-    
+
 def calculateEulerRotationVectorProjection(data: list[SmallIncrements]) -> np.ndarray:
     '''[7] Вычисление проекций вектора конечного поворота Эйлера θ с пониженной частотой'''
     tetta = np.array([
@@ -98,16 +96,16 @@ def calculateAngleOfBodyRotation(euler_vector_projection: np.ndarray) -> np.ndar
         [euler_vector_projection[2], 0, -euler_vector_projection[0]],
         [-euler_vector_projection[1], euler_vector_projection[0], 0],
     ], np.longdouble)
-    C_prevbody_to_body = Const.E() - (np.sin(euler_vector_module) / euler_vector_module) * euler_vector_matrix + ((1 - np.cos(euler_vector_module)) / (euler_vector_module ** 2)) * (euler_vector_matrix @ euler_vector_matrix)
+    C_prevbody_to_body = np.eye(3) - (np.sin(euler_vector_module) / euler_vector_module) * euler_vector_matrix + ((1 - np.cos(euler_vector_module)) / (euler_vector_module ** 2)) * (euler_vector_matrix @ euler_vector_matrix)
     return C_prevbody_to_body
 
 def calculateAngularRateProjection(velocity_x_ref:np.longdouble, velocity_y_ref: np.longdouble, latitude: np.longdouble) -> np.ndarray:
     '''[10] Вычисление абсолютной угловой скорости опорной географической СК (ref)'''
     earthRotationRateRef = EarthRotationRateRef(latitude)
     delta_angular_rate_ref = np.array([
-        -velocity_y_ref / Const.RADIUS_EARTH,
-        earthRotationRateRef[1] + velocity_x_ref / Const.RADIUS_EARTH,
-        (earthRotationRateRef[2] + velocity_x_ref / Const.RADIUS_EARTH) * np.tan(latitude),
+        -velocity_y_ref / RADIUS_EARTH,
+        earthRotationRateRef[1] + velocity_x_ref / RADIUS_EARTH,
+        earthRotationRateRef[2] + velocity_x_ref / RADIUS_EARTH * np.tan(latitude),
     ], np.longdouble)
     return delta_angular_rate_ref
 
@@ -118,7 +116,7 @@ def calculateAngleOfRefRotation(w_ref: np.ndarray, H4: int | float | np.longdoub
         [w_ref[2], 0, -w_ref[0]],
         [-w_ref[1], w_ref[0], 0],
     ], np.longdouble)
-    C_prevref_to_ref = Const.E() - H4 * w_ref_matrix + (H4 ** 2) / 2 * (w_ref_matrix @ w_ref_matrix)
+    C_prevref_to_ref = np.eye(3) - H4 * w_ref_matrix + (H4 ** 2) / 2 * (w_ref_matrix @ w_ref_matrix)
     return C_prevref_to_ref
 
 def calculateVelocityInRef(
@@ -129,11 +127,11 @@ def calculateVelocityInRef(
         delta_angular_rate_ref,
         H4: int | float | np.longdouble,
         latitude: np.longdouble,
-    ) -> tuple[np.longdouble, np.longdouble, np.longdouble]:
+    ) -> np.ndarray:
     '''Расчёт линейной скорости в опорной СК (ref)'''
     earth_rotation_rate = EarthRotationRateRef(latitude)
 
     next_velocity_x_ref = velocity_x_ref + delta_acceleration_ref[0] + H4 * ((earth_rotation_rate[2] + delta_angular_rate_ref[2]) * velocity_y_ref - (earth_rotation_rate[1] + delta_angular_rate_ref[1]) * velocity_z_ref)
     next_velocity_y_ref = velocity_y_ref + delta_acceleration_ref[1] + H4 * (-(earth_rotation_rate[2] + delta_angular_rate_ref[2]) * velocity_x_ref + delta_angular_rate_ref[0] * velocity_z_ref)
-    next_velocity_z_ref = velocity_z_ref + delta_acceleration_ref[1] + H4 * ((earth_rotation_rate[1] + delta_angular_rate_ref[1]) * velocity_x_ref - delta_angular_rate_ref[0] * velocity_y_ref - Const.GRAVITY_AXELERATION)
-    return next_velocity_x_ref, next_velocity_y_ref, next_velocity_z_ref
+    next_velocity_z_ref = velocity_z_ref + delta_acceleration_ref[2] + H4 * ((earth_rotation_rate[1] + delta_angular_rate_ref[1]) * velocity_x_ref - delta_angular_rate_ref[0] * velocity_y_ref - GRAVITY_AXELERATION)
+    return np.array([next_velocity_x_ref, next_velocity_y_ref, next_velocity_z_ref], dtype=np.longdouble)

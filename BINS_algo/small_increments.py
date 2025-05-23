@@ -39,6 +39,12 @@ class SmallIncrements:
             self.daz,
         ], np.longdouble)
     
+    @da.setter
+    def da(self, value: np.ndarray):
+        self.dax = np.longdouble(value[0])
+        self.day = np.longdouble(value[1])
+        self.daz = np.longdouble(value[2])
+    
     @property
     def dw(self) -> np.ndarray:
         return np.array([
@@ -46,3 +52,9 @@ class SmallIncrements:
             self.dwy,
             self.dwz,
         ], np.longdouble)
+    
+    @dw.setter
+    def dw(self, value: np.ndarray):
+        self.dwx = np.longdouble(value[0])
+        self.dwy = np.longdouble(value[1])
+        self.dwz = np.longdouble(value[2])
