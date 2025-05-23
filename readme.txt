@@ -1,1 +1,0 @@
-pip install numpy pandas numba scipy
