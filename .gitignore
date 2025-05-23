@@ -1,2 +1,5 @@
-*.lock
-*//*/__pycache__
+**/*.lock
+**/__pycache__
+**/.mypy_cache
+**/.venv
+**/.pytest_cache
